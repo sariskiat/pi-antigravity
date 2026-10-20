@@ -565,8 +565,8 @@ try {
     },
   });
   assert(
-    !ANTIGRAVITY_MODELS.some((model) => model.id === "gemini-4-argon"),
-    "Gemini 4 must come from authenticated discovery, not a static fallback",
+    ANTIGRAVITY_MODELS.some((model) => model.id === "gemini-4-argon"),
+    "Gemini 4 is included in static models for Enterprise and offline support",
   );
   const argon = models.find((model) => model.id === "gemini-4-argon");
   assert(argon, "default client headers discover Gemini 4 without environment overrides");

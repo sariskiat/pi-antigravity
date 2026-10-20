@@ -16,6 +16,7 @@ import { antigravityFetch } from "../utils/http.js";
 import { registerDiscoveredModelEnums, registerModelEnum } from "../models/models.js";
 
 export const DEFAULT_ENDPOINT = "https://daily-cloudcode-pa.googleapis.com";
+export const BUSINESS_AICODE_ENDPOINT = "https://businessaicode.googleapis.com";
 export const ENDPOINT_FALLBACKS = [
   DEFAULT_ENDPOINT,
   "https://daily-cloudcode-pa.sandbox.googleapis.com",
@@ -24,6 +25,13 @@ export const ENDPOINT_FALLBACKS = [
 
 const PROJECT_CACHE_TTL_MS = 30 * 60 * 1000;
 const projectCache = new Map<string, { projectId: string | undefined; expiresAt: number }>();
+const licenseCache = new Map<
+  string,
+  {
+    license: { userTier: string; location: string; tierDisplayName?: string };
+    expiresAt: number;
+  }
+>();
 
 const MODEL_CACHE_TTL_MS = 30 * 60 * 1000;
 const modelCache = new Map<string, { result: DynamicModelInfo | undefined; expiresAt: number }>();
@@ -98,6 +106,236 @@ export function jsonOrTextError(text: string): string {
   return text;
 }
 
+export function isEnterpriseCredentials(creds: {
+  projectId?: string;
+  authMode?: string;
+}): boolean {
+  const envMode = antigravityEnv("AUTH_MODE")?.trim().toLowerCase();
+  if (envMode === "enterprise") return true;
+  if (envMode === "subscription") return false;
+  if (creds.authMode === "enterprise") return true;
+  if (creds.authMode === "subscription") return false;
+  return false;
+}
+
+export async function resolveBusinessLicense(
+  token: string,
+  projectId: string,
+): Promise<{ userTier: string; location: string; tierDisplayName?: string }> {
+  const cacheKey = `${token}::${projectId}`;
+  const cached = licenseCache.get(cacheKey);
+  if (cached && cached.expiresAt > Date.now()) {
+    return cached.license;
+  }
+  const fallback = {
+    userTier: antigravityEnv("USER_TIER")?.trim() || "gcp-ge-standard-tier",
+    location: antigravityEnv("LOCATION")?.trim() || "global",
+  };
+  try {
+    const res = await antigravityFetch(`${BUSINESS_AICODE_ENDPOINT}/v1beta:fetchLicenses`, {
+      method: "GET",
+      headers: {
+        ...antigravityHeaders(token),
+        "X-Goog-User-Project": projectId,
+      },
+      signal: AbortSignal.timeout(DISCOVERY_TIMEOUT_MS),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as {
+        licenses?: Array<{
+          userTier?: string;
+          tierDisplayName?: string;
+          projectId?: string;
+          location?: string;
+        }>;
+      };
+      const licenses = Array.isArray(data?.licenses) ? data.licenses : [];
+      const matched =
+        licenses.find((l) => l.projectId === projectId) ?? licenses[0];
+      if (matched && typeof matched.userTier === "string" && matched.userTier) {
+        const license = {
+          userTier: matched.userTier,
+          location:
+            typeof matched.location === "string" && matched.location
+              ? matched.location
+              : fallback.location,
+          tierDisplayName:
+            typeof matched.tierDisplayName === "string"
+              ? matched.tierDisplayName
+              : undefined,
+        };
+        licenseCache.set(cacheKey, {
+          license,
+          expiresAt: Date.now() + PROJECT_CACHE_TTL_MS,
+        });
+        return license;
+      }
+    }
+  } catch (error) {
+    setLastError(safeError(error));
+  }
+  licenseCache.set(cacheKey, {
+    license: fallback,
+    expiresAt: Date.now() + PROJECT_CACHE_TTL_MS,
+  });
+  return fallback;
+}
+
+export function getBusinessAiCodeCatalogResult(): {
+  endpoint: string;
+  status: number;
+  data: AvailableModelsRaw;
+} {
+  return {
+    endpoint: BUSINESS_AICODE_ENDPOINT,
+    status: 200,
+    data: {
+      defaultAgentModelId: "gemini-4-argon-high",
+      models: {
+        "gemini-4-argon-high": {
+          displayName: "Gemini 4 Argon (High)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-4-argon-medium": {
+          displayName: "Gemini 4 Argon (Medium)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-4-argon-low": {
+          displayName: "Gemini 4 Argon (Low)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.8-flash-high": {
+          displayName: "Gemini 3.8 Flash (High)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.8-flash-medium": {
+          displayName: "Gemini 3.8 Flash (Medium)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.8-flash-low": {
+          displayName: "Gemini 3.8 Flash (Low)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.7-flash-high": {
+          displayName: "Gemini 3.7 Flash (High)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.7-flash-medium": {
+          displayName: "Gemini 3.7 Flash (Medium)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.7-flash-low": {
+          displayName: "Gemini 3.7 Flash (Low)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.6-flash-high": {
+          displayName: "Gemini 3.6 Flash (High)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.6-flash-medium": {
+          displayName: "Gemini 3.6 Flash (Medium)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.6-flash-low": {
+          displayName: "Gemini 3.6 Flash (Low)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.1-pro-high": {
+          displayName: "Gemini 3.1 Pro (High)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+        "gemini-3.1-pro-low": {
+          displayName: "Gemini 3.1 Pro (Low)",
+          modelProvider: "MODEL_PROVIDER_GOOGLE",
+          supportsThinking: true,
+          supportsImages: true,
+          recommended: true,
+          maxTokens: 1048576,
+          maxOutputTokens: 65535,
+        },
+      },
+      agentModelSorts: [
+        {
+          displayName: "Recommended",
+          groups: [
+            {
+              modelIds: [
+                "gemini-4-argon-high",
+                "gemini-4-argon-medium",
+                "gemini-4-argon-low",
+                "gemini-3.8-flash-high",
+                "gemini-3.8-flash-medium",
+                "gemini-3.8-flash-low",
+                "gemini-3.1-pro-high",
+                "gemini-3.1-pro-low",
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  };
+}
+
 export function parseApiKey(apiKeyRaw: string | undefined): AntigravityApiKey {
   if (!apiKeyRaw) {
     throw new Error("No Antigravity OAuth credentials. Run /login antigravity.");
@@ -105,7 +343,17 @@ export function parseApiKey(apiKeyRaw: string | undefined): AntigravityApiKey {
   try {
     const parsed = JSON.parse(apiKeyRaw) as Partial<AntigravityApiKey>;
     if (!parsed.token || !parsed.projectId) throw new Error("missing token or projectId");
-    return { token: parsed.token, projectId: parsed.projectId };
+    const authMode =
+      parsed.authMode === "enterprise" || parsed.authMode === "subscription"
+        ? parsed.authMode
+        : undefined;
+    return {
+      token: parsed.token,
+      projectId: parsed.projectId,
+      ...(authMode ? { authMode } : {}),
+      ...(typeof parsed.userTier === "string" ? { userTier: parsed.userTier } : {}),
+      ...(typeof parsed.location === "string" ? { location: parsed.location } : {}),
+    };
   } catch (error) {
     throw new Error(
       `Invalid Antigravity credentials. Run /login antigravity. (${safeError(error)})`,
@@ -475,12 +723,16 @@ export async function fetchAvailableModelsCatalog(
   token: string,
   projectId: string,
   signal?: AbortSignal,
+  authMode?: string,
 ): Promise<{ endpoint: string; status: number; data: AvailableModelsRaw }> {
   const results = await Promise.all(
     endpointCandidates().map((endpoint) =>
       fetchAvailableModelsFromEndpoint(endpoint, token, projectId, signal),
     ),
   );
+  if (isEnterpriseCredentials({ projectId, authMode })) {
+    results.push(getBusinessAiCodeCatalogResult());
+  }
   return mergeAvailableModelsResults(results);
 }
 

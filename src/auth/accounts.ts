@@ -260,9 +260,12 @@ async function ensureFresh(account: StoredAccount): Promise<StoredAccount> {
 
 function apiKeyFor(account: StoredAccount): AntigravityApiKey {
   const email = account.email?.trim();
+  const projectId = account.projectId || defaultProjectId(email || "antigravity-default");
+  const authMode = account.authMode;
   return {
     token: account.access,
-    projectId: account.projectId || defaultProjectId(email || "antigravity-default"),
+    projectId,
+    ...(authMode ? { authMode } : {}),
   };
 }
 

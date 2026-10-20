@@ -4,7 +4,9 @@ import {
   endpointCandidates,
   extractProjectId,
   fetchAvailableModelsCatalog,
+  isEnterpriseCredentials,
   parseApiKey,
+  resolveBusinessLicense,
   resolveProjectId,
 } from "../client/client.js";
 import {
@@ -247,11 +249,13 @@ export async function fetchAccountUsage(apiKeyRaw?: string): Promise<AccountUsag
   const [assistResult, summaryRes, available] = await Promise.all([
     loadCodeAssistSafe(creds.token),
     fetchQuotaSummarySafe(creds.token),
-    fetchAvailableModelsCatalog(creds.token, initialProjectId),
+    fetchAvailableModelsCatalog(creds.token, initialProjectId, undefined, creds.authMode),
   ]);
 
   // Derive project ID from the loadCodeAssist response or stored project ID.
-  const discoveredProject = assistResult ? extractProjectId(assistResult.data) : undefined;
+  const enterprise = isEnterpriseCredentials(creds);
+  const discoveredProject =
+    !enterprise && assistResult ? extractProjectId(assistResult.data) : undefined;
   const projectId = resolveProjectId({
     token: creds.token,
     warmedProject: discoveredProject ?? null,
@@ -267,8 +271,16 @@ export async function fetchAccountUsage(apiKeyRaw?: string): Promise<AccountUsag
   const { models, defaultAgentModelId, agentModelSorts } = parseModels(available.data);
 
   const assistData = (isRecord(assistResult?.data) ? assistResult.data : {}) as LoadCodeAssistRaw;
-  const productTier = parseTier(assistData.currentTier);
-  const paidTier = parseTier(assistData.paidTier);
+  let productTier = parseTier(assistData.currentTier);
+  let paidTier = parseTier(assistData.paidTier);
+  if (enterprise) {
+    const biz = await resolveBusinessLicense(creds.token, projectId);
+    paidTier = {
+      id: biz.userTier,
+      name: biz.tierDisplayName || "Gemini Enterprise Standard",
+    };
+    productTier = paidTier;
+  }
 
   // Google returns currentTier=free-tier even for Google AI Pro accounts.
   // The real subscription lives in paidTier (e.g. g1-pro-tier / Google AI Pro).

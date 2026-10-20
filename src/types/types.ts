@@ -13,11 +13,16 @@ export type AntigravityOAuthCredentials = OAuthCredentials & {
   projectId?: string;
   email?: string;
   authMode?: "subscription" | "enterprise";
+  userTier?: string;
+  location?: string;
 };
 
 export type AntigravityApiKey = {
   token: string;
   projectId: string;
+  authMode?: "subscription" | "enterprise";
+  userTier?: string;
+  location?: string;
 };
 
 export type DynamicModelInfo = {

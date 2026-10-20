@@ -67,7 +67,12 @@ export async function discoverAntigravityModels(
   signal?: AbortSignal,
 ): Promise<AntigravityCatalog> {
   const creds = parseApiKey(apiKey);
-  const available = await fetchAvailableModelsCatalog(creds.token, creds.projectId, signal);
+  const available = await fetchAvailableModelsCatalog(
+    creds.token,
+    creds.projectId,
+    signal,
+    creds.authMode,
+  );
   const models = available.data.models;
   if (!models || Object.keys(models).length === 0) {
     throw new Error("Antigravity returned an empty or unrecognized model catalog");

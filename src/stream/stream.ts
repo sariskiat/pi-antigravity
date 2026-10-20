@@ -15,13 +15,16 @@ import * as piAi from "@earendil-works/pi-ai";
 import { failoverToNextAccount } from "../auth/accounts.js";
 import {
   antigravityHeaders,
+  BUSINESS_AICODE_ENDPOINT,
   endpointCandidates,
   fetchAvailableRuntimeModel,
   formatRequestDiagnostics,
+  isEnterpriseCredentials,
   isUsableRuntimeModelId,
   jsonOrTextError,
   loadCodeAssist,
   parseApiKey,
+  resolveBusinessLicense,
   resolveProjectId,
 } from "../client/client.js";
 import {
@@ -1511,6 +1514,38 @@ export async function streamResponse(
   return hasContent;
 }
 
+export function toBusinessAiCodeModelId(runtimeModel: string, effort?: string): string {
+  const lower = runtimeModel.trim().toLowerCase();
+  if (lower === "gemini-pro-agent" || lower === "gemini-3.1-pro") {
+    return effort === "low" || effort === "medium" ? "gemini-3.1-pro-low" : "gemini-3.1-pro-high";
+  }
+  if (lower === "gemini-4-argon") {
+    if (effort === "low" || effort === "minimal" || effort === "off") return "gemini-4-argon-low";
+    if (effort === "medium") return "gemini-4-argon-medium";
+    return "gemini-4-argon-high";
+  }
+  if (lower === "gemini-3-flash-agent") return "gemini-3.6-flash-high";
+  if (lower === "gemini-3.5-flash-low" || lower === "gemini-3.5-flash-extra-low") {
+    return "gemini-3.6-flash-low";
+  }
+  return runtimeModel;
+}
+
+export function buildBusinessAiCodeRequest(
+  ccpaReq: AntigravityGenerateRequest,
+  runtimeModel: string,
+  userTier: string,
+): Record<string, unknown> {
+  const { sessionId: _sessionId, labels: _labels, ...cleanRequest } = ccpaReq.request;
+  return {
+    model: runtimeModel,
+    ...cleanRequest,
+    entitlement: {
+      userTier,
+    },
+  };
+}
+
 export function streamAntigravity(
   model: Model<Api>,
   context: Context,
@@ -1575,7 +1610,52 @@ export function streamAntigravity(
           runtimeModel = runtimeCandidates[candIdx]!;
           setLastResolvedRuntimeModel(runtimeModel);
           recordStaticRouteDiagnostics(runtimeModel);
-          const body = JSON.stringify(buildRequest(model, context, projectId, opts, runtimeModel));
+
+          const useEnterprise =
+            isEnterpriseCredentials({ projectId, authMode: creds.authMode }) &&
+            /^gemini-/i.test(runtimeModel);
+
+          if (useEnterprise) {
+            const license =
+              creds.userTier && creds.location
+                ? { userTier: creds.userTier, location: creds.location }
+                : await resolveBusinessLicense(creds.token, projectId);
+            const baicModel = toBusinessAiCodeModelId(runtimeModel, effort);
+            setLastResolvedRuntimeModel(baicModel);
+            setLastEndpoint(BUSINESS_AICODE_ENDPOINT);
+            const ccpaReq = buildRequest(model, context, projectId, opts, baicModel);
+            const baicBody = JSON.stringify(
+              buildBusinessAiCodeRequest(ccpaReq, baicModel, license.userTier),
+            );
+            response = await fetchWithHeaderDeadline(
+              `${BUSINESS_AICODE_ENDPOINT}/v1beta/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(license.location)}:streamGenerateContent?alt=sse`,
+              {
+                method: "POST",
+                headers: requestHeaders,
+                body: baicBody,
+              },
+              opts.signal,
+              streamHeaderTimeoutMs(),
+              streamStallTimeoutMs(),
+            );
+            setLastStatus(response.status);
+            if (response.ok) break;
+            lastText = await response.text();
+            break;
+          }
+
+          let ccpaProjectId = projectId;
+          if (
+            isEnterpriseCredentials({ projectId, authMode: creds.authMode }) &&
+            !/^gemini-/i.test(runtimeModel)
+          ) {
+            const consumerProj = await loadCodeAssist(creds.token);
+            if (consumerProj) ccpaProjectId = consumerProj;
+          }
+
+          const body = JSON.stringify(
+            buildRequest(model, context, ccpaProjectId, opts, runtimeModel),
+          );
 
           for (const endpoint of endpointCandidates()) {
             setLastEndpoint(endpoint);
@@ -1597,6 +1677,37 @@ export function streamAntigravity(
             // Generic resource exhaustion is a dead model, not a reason to walk every endpoint.
             if (response.status === 429 && !isRetryableRateLimit(lastText)) break;
             if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break;
+          }
+
+          // Automatic fallback to BusinessAICode if CCPA rejected an Enterprise GCP project with #3501
+          if (
+            !response?.ok &&
+            response?.status === 403 &&
+            /#3501|valid license of this product/i.test(lastText) &&
+            /^gemini-/i.test(runtimeModel)
+          ) {
+            const license = await resolveBusinessLicense(creds.token, projectId);
+            const baicModel = toBusinessAiCodeModelId(runtimeModel, effort);
+            setLastResolvedRuntimeModel(baicModel);
+            setLastEndpoint(BUSINESS_AICODE_ENDPOINT);
+            const ccpaReq = buildRequest(model, context, projectId, opts, baicModel);
+            const baicBody = JSON.stringify(
+              buildBusinessAiCodeRequest(ccpaReq, baicModel, license.userTier),
+            );
+            response = await fetchWithHeaderDeadline(
+              `${BUSINESS_AICODE_ENDPOINT}/v1beta/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(license.location)}:streamGenerateContent?alt=sse`,
+              {
+                method: "POST",
+                headers: requestHeaders,
+                body: baicBody,
+              },
+              opts.signal,
+              streamHeaderTimeoutMs(),
+              streamStallTimeoutMs(),
+            );
+            setLastStatus(response.status);
+            if (response.ok) break;
+            lastText = await response.text();
           }
 
           if (response?.ok) break;
