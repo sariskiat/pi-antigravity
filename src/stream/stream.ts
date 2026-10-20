@@ -297,10 +297,19 @@ function asImageParts(content: unknown): GeminiInlineDataPart[] {
   });
 }
 
+function hasFunctionResponsePart(parts: readonly GeminiPart[]): boolean {
+  return parts.some((part) => "functionResponse" in part);
+}
+
 function appendTurn(contents: GeminiContent[], role: GeminiRole, parts: GeminiPart[]): void {
   if (!parts.length) return;
   const last = contents[contents.length - 1];
-  if (last && last.role === role) {
+  if (
+    last &&
+    last.role === role &&
+    (role !== GeminiRole.User ||
+      hasFunctionResponsePart(last.parts) === hasFunctionResponsePart(parts))
+  ) {
     last.parts.push(...parts);
   } else {
     contents.push({ role, parts });
@@ -455,7 +464,9 @@ export function convertMessages(
     const bridge = {
       text: CONTINUATION_TEXT,
     };
-    const userTurn = contents.find((turn) => turn.role === GeminiRole.User);
+    const userTurn = contents.find(
+      (turn) => turn.role === GeminiRole.User && !hasFunctionResponsePart(turn.parts),
+    );
     if (userTurn) userTurn.parts.push(bridge);
     else contents.unshift({ role: GeminiRole.User, parts: [bridge] });
   }

@@ -245,4 +245,26 @@ const flat = JSON.stringify(historyContents);
 assert.ok(flat.includes('"functionCall"') || flat.includes("Observation"), "tool history replayed");
 assert.ok(!flat.includes("toolsAdded"), "system payloads not leaked into contents");
 
+const toolResultThenUserContext = {
+  messages: [
+    ...history.messages,
+    {
+      role: "user",
+      content: [{ type: "text", text: "steer after tool result" }],
+      timestamp: 4,
+    },
+  ],
+} as unknown as Context;
+const steeredContents = convertMessages(testModel, toolResultThenUserContext, "gemini-4-argon-high");
+assert.equal(steeredContents.length, 4, "functionResponse turn and subsequent user text turn must stay separate");
+assert.ok(
+  steeredContents[2]?.parts.every((part) => "functionResponse" in part),
+  "toolResult turn contains only functionResponse parts",
+);
+assert.deepEqual(
+  steeredContents[3]?.parts,
+  [{ text: "steer after tool result" }],
+  "subsequent user message forms its own trailing user turn",
+);
+
 console.log("scripts/test-transcript-context.ts: all TranscriptContext tests passed");
