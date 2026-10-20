@@ -44,12 +44,19 @@ export function stableProjectId(seed: string): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
+function configuredEnvProjectId(): string | undefined {
+  const val = antigravityEnv("PROJECT_ID")?.trim();
+  if (!val || val === "default-cli-project") return undefined;
+  return val;
+}
+
 /**
  * Fallback project id when discovery fails.
- * Prefer ANTIGRAVITY_PROJECT_ID, then a stable seed (email), never process.cwd().
+ * Prefer ANTIGRAVITY_PROJECT_ID (ignoring agy's internal default-cli-project placeholder),
+ * then a stable seed (email), never process.cwd().
  */
 export function defaultProjectId(seed = "antigravity-default"): string {
-  return antigravityEnv("PROJECT_ID")?.trim() || stableProjectId(seed);
+  return configuredEnvProjectId() || stableProjectId(seed);
 }
 
 /** @deprecated Use defaultProjectId(seed); kept for scripts that imported the old constant. */
@@ -537,7 +544,7 @@ export function resolveProjectId(opts: {
   warmedProject?: string | null;
 }): string {
   return (
-    antigravityEnv("PROJECT_ID")?.trim() ||
+    configuredEnvProjectId() ||
     opts.warmedProject ||
     opts.credentialProjectId ||
     defaultProjectId(opts.email || "antigravity-default")
