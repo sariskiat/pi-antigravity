@@ -1,16 +1,16 @@
 {
-  "name": "pi-antigravity",
+  "name": "pi-palm-anti",
   "version": "0.11.0",
   "description": "Personal Antigravity / Cloud Code Assist provider for Pi Coding Agent",
   "author": "Rahul Arya",
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sariskiat/pi-antigravity.git"
+    "url": "git+https://github.com/sariskiat/pi-palm-anti.git"
   },
-  "homepage": "https://github.com/sariskiat/pi-antigravity#readme",
+  "homepage": "https://github.com/sariskiat/pi-palm-anti#readme",
   "bugs": {
-    "url": "https://github.com/sariskiat/pi-antigravity/issues"
+    "url": "https://github.com/sariskiat/pi-palm-anti/issues"
   },
   "type": "module",
   "main": "./src/index.ts",
