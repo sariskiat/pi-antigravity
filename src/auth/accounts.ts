@@ -177,6 +177,7 @@ function writeActiveCredential(account: StoredAccount | undefined): void {
       refresh: account.refresh,
       expires: account.expires,
       projectId: account.projectId,
+      ...(account.authMode ? { authMode: account.authMode } : {}),
     };
   } else {
     delete auth.antigravity;
@@ -189,12 +190,17 @@ function currentAuthCredentials(): AntigravityOAuthCredentials | undefined {
   if (!current || typeof current !== "object") return undefined;
   const record = current as Record<string, unknown>;
   if (typeof record.refresh !== "string" || !record.refresh) return undefined;
+  const authMode =
+    record.authMode === "enterprise" || record.authMode === "subscription"
+      ? record.authMode
+      : undefined;
   return {
     access: typeof record.access === "string" ? record.access : "",
     refresh: record.refresh,
     expires: typeof record.expires === "number" ? record.expires : 0,
     projectId: typeof record.projectId === "string" ? record.projectId : undefined,
     email: typeof record.email === "string" ? record.email : undefined,
+    ...(authMode ? { authMode } : {}),
   };
 }
 

@@ -12,6 +12,7 @@ import type { GeminiRole, GeminiToolCallingMode, ThinkingEffort, ToolChoice } fr
 export type AntigravityOAuthCredentials = OAuthCredentials & {
   projectId?: string;
   email?: string;
+  authMode?: "subscription" | "enterprise";
 };
 
 export type AntigravityApiKey = {

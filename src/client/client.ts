@@ -61,9 +61,9 @@ export function endpointCandidates(): string[] {
 }
 
 // Catalog visibility is gated on this version. 1.2.4 hides Gemini 4 Argon;
-// 1.4.0 is aligned with the current official agy CLI release (#93, #94, #97).
+// 1.4.3 is aligned with the current official agy CLI release (#93, #94, #97).
 const DEFAULT_USER_AGENT =
-  "antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)";
+  "antigravity/cli/1.4.3 (aidev_client; os_type=darwin; arch=arm64; cl=982146307; auth_method=consumer)";
 
 /** Default User-Agent matching pure Antigravity CLI wire fingerprint. */
 export function defaultUserAgent(): string {

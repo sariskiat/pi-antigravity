@@ -18,6 +18,7 @@ export {
   listAccounts,
   rememberAccount,
   removeAccount,
+  syncCurrentAuth,
   updateRememberedAccount,
 } from "./accounts.js";
 export type { AccountSummary, StoredAccount } from "./accounts.js";

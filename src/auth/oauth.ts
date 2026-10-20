@@ -196,6 +196,61 @@ function credentialEmail(credentials: OAuthCredentials): string | undefined {
   return typeof email === "string" ? email : undefined;
 }
 
+function credentialAuthMode(
+  credentials: OAuthCredentials,
+): "subscription" | "enterprise" | undefined {
+  const mode = (credentials as AntigravityOAuthCredentials).authMode;
+  return mode === "enterprise" || mode === "subscription" ? mode : undefined;
+}
+
+async function selectProjectAfterAuth(
+  callbacks: OAuthLoginCallbacks,
+  discoveredProject: string | undefined,
+  email: string | undefined,
+): Promise<{ projectId: string; authMode: "subscription" | "enterprise" }> {
+  const envProject = antigravityEnv("PROJECT_ID")?.trim();
+  const fallbackSubProject = discoveredProject || defaultProjectId(email || "antigravity-default");
+
+  if (typeof callbacks.onPrompt !== "function") {
+    if (envProject) {
+      return { projectId: envProject, authMode: "enterprise" };
+    }
+    return { projectId: fallbackSubProject, authMode: "subscription" };
+  }
+
+  const choiceRaw = await callbacks.onPrompt({
+    message:
+      "Select Antigravity mode:\n" +
+      `  1) Subscription (Consumer auto-discovered project: ${fallbackSubProject})\n` +
+      `  2) Enterprise (Google Cloud Project${envProject ? `, default: ${envProject}` : ""})\n` +
+      "Enter 1, 2, or type a GCP Project ID directly (default: 1):",
+    placeholder: "1 (Subscription) or 2 (Enterprise) or GCP project ID",
+  });
+
+  const choice = (choiceRaw ?? "").trim();
+  if (!choice || choice === "1" || /^sub(scription)?$/i.test(choice)) {
+    return { projectId: fallbackSubProject, authMode: "subscription" };
+  }
+
+  if (choice === "2" || /^ent(erprise)?$/i.test(choice)) {
+    const projectInputRaw = await callbacks.onPrompt({
+      message: envProject
+        ? `Enter your Enterprise Google Cloud Project ID (press Enter for ${envProject}):`
+        : "Enter your Enterprise Google Cloud Project ID:",
+      placeholder: envProject || "your-gcp-project-id",
+    });
+    const projectInput = (projectInputRaw ?? "").trim() || envProject;
+    if (!projectInput) {
+      throw new Error(
+        "Enterprise mode requires a Google Cloud Project ID. Re-run /login antigravity or use /antigravity.project <gcp-project-id>.",
+      );
+    }
+    return { projectId: projectInput, authMode: "enterprise" };
+  }
+
+  return { projectId: choice, authMode: "enterprise" };
+}
+
 /**
  * Parse a callback URL (or bare query string) pasted by the user from a
  * remote/headless browser that could not reach the local callback server.
@@ -381,12 +436,18 @@ export async function loginAntigravity(
       getUserEmail(tokenData.access_token),
       loadCodeAssist(tokenData.access_token),
     ]);
+    const { projectId, authMode } = await selectProjectAfterAuth(
+      callbacks,
+      discoveredProject,
+      email,
+    );
     return {
       refresh: tokenData.refresh_token,
       access: tokenData.access_token,
       expires: Date.now() + tokenData.expires_in * 1000 - 5 * 60 * 1000,
-      projectId: discoveredProject || defaultProjectId(email || "antigravity-default"),
+      projectId,
       email,
+      authMode,
     };
   } finally {
     cleanup();
@@ -422,6 +483,7 @@ export async function refreshAntigravityToken(
   // can never hit here — skip the extra round-trip entirely when we already know the
   // project id (the normal case; it's set at login and doesn't change token to token).
   const existingProjectId = credentialProjectId(credentials);
+  const authMode = credentialAuthMode(credentials);
   const discoveredProject = existingProjectId ? undefined : await loadCodeAssist(data.access_token);
   const email = credentialEmail(credentials);
   return {
@@ -431,14 +493,19 @@ export async function refreshAntigravityToken(
     expires: Date.now() + data.expires_in * 1000 - 5 * 60 * 1000,
     projectId:
       existingProjectId || discoveredProject || defaultProjectId(email || "antigravity-default"),
+    ...(authMode ? { authMode } : {}),
   };
 }
 
 export function getApiKey(credentials: OAuthCredentials): string {
   const email = credentialEmail(credentials);
+  const projectId =
+    credentialProjectId(credentials) || defaultProjectId(email || "antigravity-default");
+  const authMode = credentialAuthMode(credentials);
   return JSON.stringify({
     token: credentials.access,
-    projectId: credentialProjectId(credentials) || defaultProjectId(email || "antigravity-default"),
+    projectId,
+    ...(authMode ? { authMode } : {}),
   });
 }
 

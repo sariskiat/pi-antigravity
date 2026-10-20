@@ -1,3 +1,6 @@
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import {
   ANTIGRAVITY_IMAGE_API,
@@ -16,9 +19,10 @@ import {
   rememberAccount,
   refreshAntigravityToken,
   removeAccount,
+  syncCurrentAuth,
   updateRememberedAccount,
 } from "./auth/index.js";
-import { DEFAULT_ENDPOINT } from "./client/index.js";
+import { DEFAULT_ENDPOINT, defaultProjectId, loadCodeAssist } from "./client/index.js";
 import { getLastDiagnostics, runWithDiagnostics } from "./diagnostics/index.js";
 import { generateAntigravityImage, parseImageCommandArgs } from "./image/index.js";
 import { executeAntigravitySearch, parseSearchCommandArgs } from "./search/index.js";
@@ -38,7 +42,7 @@ import {
   formatUsageSummary,
   resolveApiKeyFromContext,
 } from "./usage/index.js";
-import { redactSecrets, maskEmail } from "./utils/index.js";
+import { antigravityEnv, redactSecrets, maskEmail } from "./utils/index.js";
 
 /**
  * Pi's interactive `notify` writes into the chat transcript. `console.log` in that
@@ -316,9 +320,99 @@ export default function (pi: ExtensionAPI): void {
         `lastError=${d.error ? redactSecrets(d.error) : "none"}`,
         "transport=native-streamSimple",
         "runtimeCli=not-used",
-        "commands=/antigravity.usage /antigravity.models /antigravity.accounts /antigravity.refresh /antigravity.doctor /antigravity.image /antigravity.search",
+        "commands=/antigravity.usage /antigravity.models /antigravity.accounts /antigravity.project /antigravity.refresh /antigravity.doctor /antigravity.image /antigravity.search",
       ];
       emitCommandOutput(ctx, `Antigravity doctor\n${lines.join("\n")}`);
+    },
+  });
+
+  pi.registerCommand("antigravity.project", {
+    description:
+      "Show or switch Antigravity project/mode (usage: /antigravity.project [subscription | <gcp-project-id>])",
+    handler: async (args, ctx) => {
+      const authPath = join(
+        process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent"),
+        "auth.json",
+      );
+      if (!existsSync(authPath)) {
+        emitCommandOutput(
+          ctx,
+          "No Pi auth.json found. Run /login antigravity first.",
+          "warning",
+        );
+        return;
+      }
+      try {
+        const authData = JSON.parse(readFileSync(authPath, "utf8")) as Record<
+          string,
+          Record<string, unknown>
+        >;
+        const ag = authData[PROVIDER_ID];
+        if (!ag || typeof ag !== "object") {
+          emitCommandOutput(
+            ctx,
+            "No Antigravity credentials in auth.json. Run /login antigravity first.",
+            "warning",
+          );
+          return;
+        }
+        const target = (args || "").trim();
+        if (!target) {
+          const currentMode = ag.authMode === "enterprise" ? "enterprise" : "subscription";
+          emitCommandOutput(
+            ctx,
+            `Antigravity project: ${String(ag.projectId || "none")} (mode=${String(currentMode)}, email=${String(ag.email || "unknown")})\n` +
+              "Switch to Enterprise: /antigravity.project <gcp-project-id>\n" +
+              "Switch to Subscription: /antigravity.project subscription",
+          );
+          return;
+        }
+
+        if (/^(sub|subscription|consumer|1)$/i.test(target)) {
+          const token = typeof ag.access === "string" ? ag.access : "";
+          const email = typeof ag.email === "string" ? ag.email : undefined;
+          const discovered = token ? await loadCodeAssist(token) : undefined;
+          const nextProject = discovered || defaultProjectId(email || "antigravity-default");
+          ag.projectId = nextProject;
+          ag.authMode = "subscription";
+          writeFileSync(authPath, `${JSON.stringify(authData, null, 2)}\n`, "utf8");
+          syncCurrentAuth();
+          emitCommandOutput(
+            ctx,
+            `Switched Antigravity to Subscription mode (projectId=${nextProject}).`,
+          );
+          return;
+        }
+
+        const isEnterpriseKeyword = /^(ent|enterprise|2)$/i.test(target);
+        const nextProject = isEnterpriseKeyword
+          ? antigravityEnv("PROJECT_ID")?.trim() ||
+            (typeof ag.projectId === "string" ? ag.projectId.trim() : "")
+          : target;
+        if (!nextProject) {
+          emitCommandOutput(
+            ctx,
+            "Usage: /antigravity.project <gcp-project-id> (or /antigravity.project subscription)",
+            "warning",
+          );
+          return;
+        }
+        ag.projectId = nextProject;
+        ag.authMode = "enterprise";
+        writeFileSync(authPath, `${JSON.stringify(authData, null, 2)}\n`, "utf8");
+        syncCurrentAuth();
+        emitCommandOutput(
+          ctx,
+          `Switched Antigravity to Enterprise mode (projectId=${nextProject}).`,
+        );
+      } catch (error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        emitCommandOutput(
+          ctx,
+          `Failed to update Antigravity project: ${redactSecrets(msg)}`,
+          "error",
+        );
+      }
     },
   });
 
