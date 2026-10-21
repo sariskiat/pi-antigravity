@@ -137,8 +137,8 @@ async function main(): Promise<void> {
   // 8. Partially numeric timeout settings are invalid rather than silently truncated.
   process.env.ANTIGRAVITY_STREAM_HEADER_TIMEOUT_MS = "120s";
   process.env.ANTIGRAVITY_STREAM_STALL_TIMEOUT_MS = "12.5";
-  assert(streamHeaderTimeoutMs() === 180_000, "partial header timeout must use the default");
-  assert(streamStallTimeoutMs() === 120_000, "partial stall timeout must use the default");
+  assert(streamHeaderTimeoutMs() === 300_000, "partial header timeout must use the default");
+  assert(streamStallTimeoutMs() === 600_000, "partial stall timeout must use the default");
   delete process.env.ANTIGRAVITY_STREAM_HEADER_TIMEOUT_MS;
   delete process.env.ANTIGRAVITY_STREAM_STALL_TIMEOUT_MS;
 

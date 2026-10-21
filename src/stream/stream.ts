@@ -1158,9 +1158,9 @@ function asToolCallArguments(args: Record<string, unknown> | undefined): ToolCal
 }
 
 /** Default response-header deadline for streaming requests (see fetchWithHeaderDeadline). */
-const STREAM_HEADER_TIMEOUT_DEFAULT_MS = 180_000;
+const STREAM_HEADER_TIMEOUT_DEFAULT_MS = 300_000;
 /** Default mid-body stall deadline: abort when no SSE bytes arrive for this long. */
-const STREAM_STALL_TIMEOUT_DEFAULT_MS = 120_000;
+const STREAM_STALL_TIMEOUT_DEFAULT_MS = 600_000;
 
 function envTimeoutMs(name: string, fallback: number): number {
   const raw = antigravityEnv(name);
@@ -1190,7 +1190,7 @@ export function streamStallTimeoutMs(): number {
 }
 
 function stallError(stallMs: number): Error {
-  return new Error(`stream stalled: no data for ${stallMs}ms`);
+  return new Error(`stream stalled (timed out): no data for ${stallMs}ms`);
 }
 
 /**
@@ -1222,6 +1222,7 @@ function guardResponseBody(
     if (stallMs <= 0) return;
     if (timer) clearTimeout(timer);
     timer = setTimeout(() => controller.abort(stallError(stallMs)), stallMs);
+    timer.unref?.();
   };
   let streamController: ReadableStreamDefaultController<Uint8Array> | undefined;
   const abortBody = () => {
@@ -1291,10 +1292,12 @@ export async function fetchWithHeaderDeadline(
   const timer =
     timeoutMs > 0
       ? setTimeout(
-          () => controller.abort(new Error(`no response headers within ${timeoutMs}ms`)),
+          () =>
+            controller.abort(new Error(`no response headers within ${timeoutMs}ms (timed out)`)),
           timeoutMs,
         )
       : undefined;
+  timer?.unref?.();
   let responseBodyGuarded = false;
   try {
     const response = await fetchFn(url, { ...init, signal: controller.signal });
@@ -1815,7 +1818,9 @@ export function streamAntigravity(
         if (received) break;
       }
 
-      if (!received) throw new Error("Antigravity API returned an empty response");
+      if (!received) {
+        throw new Error("Antigravity API returned an empty response (stream ended without content)");
+      }
       setLastLatencyMs(Date.now() - startTime);
       if (output.stopReason === "error" || output.stopReason === "aborted") {
         const errorDetail = output.rawStopReason
