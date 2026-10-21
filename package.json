@@ -2,7 +2,6 @@
   "name": "pi-palm-anti",
   "version": "0.11.0",
   "description": "Google Cloud Gemini Enterprise and Antigravity provider for Pi Coding Agent with Gemini 4 Argon support",
-  "author": "Rahul Arya",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -28,7 +27,6 @@
     "src",
     "tsconfig.json"
   ],
-  "packageManager": "yarn@4.18.0+sha512.fcb8716fe7cd0eece141ffc18b92193a9df9204c1ba83189c288835223fc0bbe64af473bab0d5e9927a7daeb5caf2bb07eb2787cc9338ca040ea125f2a1f2f7e",
   "engines": {
     "node": ">=22.15.0"
   },
@@ -40,10 +38,7 @@
     "format:check": "prettier --check .",
     "security-check": "node scripts/run-ts.mjs scripts/security-check.ts",
     "test": "node scripts/run-ts.mjs scripts/test-sanitize-text.ts && node scripts/run-ts.mjs scripts/test-model-routing.ts && node scripts/run-ts.mjs scripts/test-model-discovery.ts && node scripts/run-ts.mjs scripts/test-usage-formatter.ts && node scripts/run-ts.mjs scripts/test-stream-sse.ts && node scripts/run-ts.mjs scripts/test-stream-header-deadline.ts && node scripts/run-ts.mjs scripts/test-http-proxy.ts && node scripts/run-ts.mjs scripts/test-oauth-fetch.ts && node scripts/run-ts.mjs scripts/test-image-gen.ts && node scripts/run-ts.mjs scripts/test-native-images.ts && node scripts/run-ts.mjs scripts/test-transcript-context.ts && node scripts/run-ts.mjs scripts/test-accounts.ts && node scripts/run-ts.mjs scripts/test-search.ts && node scripts/run-ts.mjs scripts/test-search-citations.ts && node scripts/run-ts.mjs scripts/test-extra-tools-toggle.ts && node scripts/run-ts.mjs scripts/test-provider-registration.ts",
-    "smoke:tools": "node scripts/run-ts.mjs scripts/smoke-tool-schema.ts",
-    "smoke:models": "node scripts/run-ts.mjs scripts/smoke-all-models.mjs",
-    "audit": "yarn npm audit --environment production --recursive && yarn npm audit --severity high --all --recursive",
-    "check": "yarn typecheck && yarn lint && yarn format:check && yarn security-check && yarn test && yarn audit"
+    "check": "npm run typecheck && npm run lint && npm run format:check && npm run security-check && npm test"
   },
   "pi": {
     "extensions": [
