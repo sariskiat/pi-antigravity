@@ -16,6 +16,7 @@ pi install git:github.com/sariskiat/pi-palm-anti
   "defaultProvider": "antigravity",
   "defaultModel": "gemini-4-argon",
   "defaultThinkingLevel": "high",
+  "httpIdleTimeoutMs": 600000,
   "packages": [
     "git:github.com/sariskiat/pi-palm-anti"
   ]
