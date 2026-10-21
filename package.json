@@ -1,7 +1,7 @@
 {
   "name": "pi-palm-anti",
   "version": "0.11.0",
-  "description": "Personal Antigravity / Cloud Code Assist provider for Pi Coding Agent",
+  "description": "Google Cloud Gemini Enterprise and Antigravity provider for Pi Coding Agent with Gemini 4 Argon support",
   "author": "Rahul Arya",
   "license": "MIT",
   "repository": {
