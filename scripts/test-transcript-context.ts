@@ -267,4 +267,32 @@ assert.deepEqual(
   "subsequent user message forms its own trailing user turn",
 );
 
+const imageToolResultContext = {
+  messages: [
+    ...history.messages.slice(0, 3),
+    {
+      role: "toolResult",
+      toolCallId: "call-1",
+      toolName: "read",
+      isError: false,
+      timestamp: 3,
+      content: [
+        { type: "text", text: "Read image file [image/png]" },
+        { type: "image", data: "AQID", mimeType: "image/png" },
+      ],
+    },
+  ],
+} as unknown as Context;
+const imageToolContents = convertMessages(testModel, imageToolResultContext, "gemini-4-argon-high");
+assert.ok(
+  imageToolContents[2]?.parts.every((part) => "functionResponse" in part),
+  "multimodal toolResult turn must not mix top-level inlineData with functionResponse",
+);
+assert.deepEqual(
+  (imageToolContents[2]?.parts[0] as { functionResponse?: { parts?: unknown } })?.functionResponse
+    ?.parts,
+  [{ inlineData: { mimeType: "image/png", data: "AQID" } }],
+  "Gemini 3+/4 nests toolResult images inside functionResponse.parts",
+);
+
 console.log("scripts/test-transcript-context.ts: all TranscriptContext tests passed");

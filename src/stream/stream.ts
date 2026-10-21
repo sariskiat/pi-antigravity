@@ -225,6 +225,10 @@ function geminiRequiresThoughtSignature(runtimeModel: string): boolean {
   return true;
 }
 
+function supportsMultimodalFunctionResponse(modelId: string, runtimeModel: string): boolean {
+  return geminiRequiresThoughtSignature(runtimeModel) || geminiRequiresThoughtSignature(modelId);
+}
+
 function parseImageData(raw: string, explicitMime?: string): { data: string; mimeType: string } {
   const match = raw.match(/^data:([^;]+);base64,(.+)$/s);
   if (match) {
@@ -325,12 +329,23 @@ export function convertMessages(
   const contents: GeminiContent[] = [];
   const requiresSig = geminiRequiresThoughtSignature(runtimeModel);
   const droppedToolCallIds = new Map<string, string>();
+  const pendingToolImageParts: GeminiInlineDataPart[] = [];
+  const flushPendingToolImages = (): void => {
+    if (pendingToolImageParts.length > 0) {
+      appendTurn(contents, GeminiRole.User, [
+        { text: "Tool result image:" },
+        ...pendingToolImageParts.splice(0),
+      ]);
+    }
+  };
   for (const msg of context.messages) {
     if ((msg.role as string) === "system") continue;
     if (msg.role === "user") {
+      flushPendingToolImages();
       const parts = asTextParts(msg.content);
       appendTurn(contents, GeminiRole.User, parts);
     } else if (msg.role === "assistant") {
+      flushPendingToolImages();
       if (msg.stopReason === "error" || msg.stopReason === "aborted") {
         continue;
       }
@@ -394,14 +409,23 @@ export function convertMessages(
           }
         }
       }
+      if (
+        toolCalls.length > 0 &&
+        requiresSig &&
+        !groupIsSigned &&
+        parts.every((part) => "thought" in part && part.thought === true)
+      ) {
+        continue;
+      }
       appendTurn(contents, GeminiRole.Model, parts);
     } else if (msg.role === "toolResult") {
       const text = msg.content
         .filter((c): c is TextContent => c.type === "text")
         .map((c) => sanitizeText(c.text))
         .join("\n");
-      const responseText = text || (msg.isError ? "Tool failed" : "");
       const imageParts = asImageParts(msg.content);
+      const responseText =
+        text || (msg.isError ? "Tool failed" : imageParts.length > 0 ? "(see attached image)" : "");
       const rawId = msg.toolCallId || "";
       const sanitizedId = toolCallIdNeeded(model.id, runtimeModel)
         ? sanitizeToolCallId(rawId, msg.toolName)
@@ -412,6 +436,7 @@ export function convertMessages(
           (rawId === "" ? droppedToolCallIds.get(`empty:${msg.toolName}`) : undefined))
         : undefined;
       if (droppedArgs !== undefined) {
+        flushPendingToolImages();
         const label =
           droppedArgs === "{}" ? `\`${msg.toolName}\`` : `\`${msg.toolName}\` (${droppedArgs})`;
         appendTurn(contents, GeminiRole.User, [
@@ -419,19 +444,25 @@ export function convertMessages(
           ...imageParts,
         ]);
       } else {
+        const multimodalFnResponse = supportsMultimodalFunctionResponse(model.id, runtimeModel);
         const part: GeminiFunctionResponsePart = {
           functionResponse: {
             name: msg.toolName,
             response: msg.isError ? { error: responseText } : { output: responseText },
+            ...(imageParts.length > 0 && multimodalFnResponse ? { parts: imageParts } : {}),
             ...(toolCallIdNeeded(model.id, runtimeModel)
               ? { id: sanitizeToolCallId(msg.toolCallId || "", msg.toolName) }
               : {}),
           },
         };
-        appendTurn(contents, GeminiRole.User, [part, ...imageParts]);
+        appendTurn(contents, GeminiRole.User, [part]);
+        if (imageParts.length > 0 && !multimodalFnResponse) {
+          pendingToolImageParts.push(...imageParts);
+        }
       }
     }
   }
+  flushPendingToolImages();
 
   // A function-call model turn is only valid immediately after a user turn
   // (including a function-response turn). Compacted history can drop that

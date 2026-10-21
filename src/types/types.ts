@@ -73,6 +73,7 @@ export type GeminiFunctionResponsePart = {
   functionResponse: {
     name: string;
     response: { error: string } | { output: string };
+    parts?: GeminiInlineDataPart[];
     id?: string;
   };
 };
