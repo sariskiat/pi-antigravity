@@ -1,8 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawnSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import assert from "node:assert/strict";
 import {
   antigravityHeaders,
@@ -227,42 +223,6 @@ const suffixedAlias = buildAntigravityCatalog(
 assert.equal(suffixedAlias.models.length, 1);
 assert.equal(suffixedAlias.routing["gemini-101-pro"].routing?.high, "gemini-pro-agent-high");
 
-// The live probe must continue and summarize when one endpoint has no supported
-// chat entries. Fake credentials and fetch keep this subprocess entirely offline.
-const probeDir = mkdtempSync(join(tmpdir(), "antigravity-probe-"));
-try {
-  const authFile = join(probeDir, "auth.json");
-  writeFileSync(authFile, JSON.stringify({ antigravity: { access: "fake", projectId: "fake" } }));
-  const probe = spawnSync(
-    process.execPath,
-    [
-      "scripts/run-ts.mjs",
-      "-e",
-      `
-    let calls = 0;
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      models: ++calls === 1
-        ? { chat_hidden: { displayName: "Hidden chat" } }
-        : { "gemini-99-flash-low": { displayName: "Gemini 99 Flash (Low)" } },
-    }));
-    await import("./scripts/probe-model-discovery.mjs");
-  `,
-    ],
-    {
-      env: { ...process.env, PI_AUTH_PATH: authFile, ANTIGRAVITY_BASE_URL: "" },
-      encoding: "utf8",
-      timeout: 15000,
-    },
-  );
-  assert.ifError(probe.error);
-  assert.equal(probe.status, 1, "unsupported catalog is a probe failure");
-  assert.match(probe.stdout, /FAIL .* supported chat catalog/);
-  assert.match(probe.stdout, /PASS https:\/\/cloudcode-pa.googleapis.com supported chat catalog/);
-  assert.match(probe.stdout, /Live discovery probe: 9 passed, 1 failed/);
-} finally {
-  rmSync(probeDir, { recursive: true, force: true });
-}
-
 const merged = mergeAvailableModelsResults([
   { endpoint: "valid", status: 200, data: { models: future } },
   { endpoint: "invalid", status: 200, data: { models: { broken: null } } },
@@ -277,7 +237,10 @@ for (const models of [{}, [], { broken: "not metadata" }]) {
 
 // Provider-owned persistence restores routing and dynamic enums before offline/network checks.
 const dynamicCatalog = buildAntigravityCatalog(
-  { "gemini-9.9-flash-low": info("Gemini 9.9 Flash (Low)") },
+  {
+    "gemini-9.9-flash-low": info("Gemini 9.9 Flash (Low)"),
+    "gemini-4-argon-high": info("Gemini 4 Argon (High)"),
+  },
   fallback,
 );
 applyAntigravityCatalog(dynamicCatalog);

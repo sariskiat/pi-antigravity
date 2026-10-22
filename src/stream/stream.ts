@@ -1060,8 +1060,11 @@ function isRetryableRateLimit(text: string): boolean {
  * Keep the numeric status out of non-retryable errors. Pi treats the digits 429 as a
  * retryable provider error even when the friendly text says the model is unavailable.
  */
-function publicErrorStatus(status: number | undefined, friendly: string): string {
+export function publicErrorStatus(status: number | undefined, friendly: string): string {
   if (status === undefined) return "no response";
+  if (status === 408 || status === 500 || status === 502 || status === 503 || status === 504) {
+    return String(status);
+  }
   return /retrying automatically/i.test(friendly) ? String(status) : "request-failed";
 }
 
@@ -1151,16 +1154,20 @@ export function friendlyAntigravityError(status: number | undefined, text: strin
     return `This model is unavailable right now (${msg || "resource exhausted"}). Next: switch to gemini-3.8-flash or another Flash model. This is not necessarily an account quota wall.`;
   }
   if (status === 500) {
-    return "Antigravity had an internal server error. Next: retry in a moment or switch models.";
+    return "Antigravity had an internal server error (500). Next: retrying automatically; if it persists, switch models.";
   }
-  if (status === 502) return "Antigravity returned a bad gateway error. Next: retry in a moment.";
+  if (status === 502) {
+    return "Antigravity returned a bad gateway error (502). Next: retrying automatically; if it persists, switch models.";
+  }
   if (status === 503) {
     if (/No capacity available/i.test(msg)) {
-      return "This model has no capacity right now. Next: retry later or switch to another model.";
+      return "This model has no capacity right now (503 service unavailable). Next: retrying automatically; if it persists, switch to another model.";
     }
-    return "Antigravity is temporarily unavailable. Next: retry in a moment or switch models.";
+    return "Antigravity is temporarily unavailable (503 service unavailable). Next: retrying automatically; if it persists, switch models.";
   }
-  if (status === 504) return "Antigravity timed out upstream. Next: retry in a moment.";
+  if (status === 504) {
+    return "Antigravity timed out upstream (504). Next: retrying automatically; if it persists, switch models.";
+  }
   return msg;
 }
 
@@ -1672,87 +1679,97 @@ export function streamAntigravity(
             const baicBody = JSON.stringify(
               buildBusinessAiCodeRequest(ccpaReq, baicModel, license.userTier),
             );
-            response = await fetchWithHeaderDeadline(
-              `${BUSINESS_AICODE_ENDPOINT}/v1beta/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(license.location)}:streamGenerateContent?alt=sse`,
-              {
-                method: "POST",
-                headers: requestHeaders,
-                body: baicBody,
-              },
-              opts.signal,
-              streamHeaderTimeoutMs(),
-              streamStallTimeoutMs(),
-            );
-            setLastStatus(response.status);
-            if (response.ok) break;
-            lastText = await response.text();
-            break;
-          }
+            for (let attempt = 0; attempt < 3; attempt++) {
+              if (attempt > 0) {
+                if (opts.signal?.aborted) break;
+                const delay = 500 * 2 ** (attempt - 1);
+                await new Promise((res) => setTimeout(res, delay));
+                if (opts.signal?.aborted) break;
+              }
+              response = await fetchWithHeaderDeadline(
+                `${BUSINESS_AICODE_ENDPOINT}/v1beta/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(license.location)}:streamGenerateContent?alt=sse`,
+                {
+                  method: "POST",
+                  headers: requestHeaders,
+                  body: baicBody,
+                },
+                opts.signal,
+                streamHeaderTimeoutMs(),
+                streamStallTimeoutMs(),
+              );
+              setLastStatus(response.status);
+              if (response.ok) break;
+              lastText = await response.text();
+              if (response.status === 429 && isAccountQuota429(lastText)) break;
+              if (response.status === 429 && !isRetryableRateLimit(lastText)) break;
+              if (![408, 429, 500, 502, 503, 504].includes(response.status)) break;
+            }
+          } else {
+            let ccpaProjectId = projectId;
+            if (
+              isEnterpriseCredentials({ projectId, authMode: creds.authMode }) &&
+              !/^gemini-/i.test(runtimeModel)
+            ) {
+              const consumerProj = await loadCodeAssist(creds.token);
+              if (consumerProj) ccpaProjectId = consumerProj;
+            }
 
-          let ccpaProjectId = projectId;
-          if (
-            isEnterpriseCredentials({ projectId, authMode: creds.authMode }) &&
-            !/^gemini-/i.test(runtimeModel)
-          ) {
-            const consumerProj = await loadCodeAssist(creds.token);
-            if (consumerProj) ccpaProjectId = consumerProj;
-          }
-
-          const body = JSON.stringify(
-            buildRequest(model, context, ccpaProjectId, opts, runtimeModel),
-          );
-
-          for (const endpoint of endpointCandidates()) {
-            setLastEndpoint(endpoint);
-            response = await fetchWithHeaderDeadline(
-              `${endpoint}/v1internal:streamGenerateContent?alt=sse`,
-              {
-                method: "POST",
-                headers: requestHeaders,
-                body,
-              },
-              opts.signal,
-              streamHeaderTimeoutMs(),
-              streamStallTimeoutMs(),
+            const body = JSON.stringify(
+              buildRequest(model, context, ccpaProjectId, opts, runtimeModel),
             );
-            setLastStatus(response.status);
-            if (response.ok) break;
-            lastText = await response.text();
-            if (response.status === 429 && isAccountQuota429(lastText)) break;
-            // Generic resource exhaustion is a dead model, not a reason to walk every endpoint.
-            if (response.status === 429 && !isRetryableRateLimit(lastText)) break;
-            if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break;
-          }
 
-          // Automatic fallback to BusinessAICode if CCPA rejected an Enterprise GCP project with #3501
-          if (
-            !response?.ok &&
-            response?.status === 403 &&
-            /#3501|valid license of this product/i.test(lastText) &&
-            /^gemini-/i.test(runtimeModel)
-          ) {
-            const license = await resolveBusinessLicense(creds.token, projectId);
-            const baicModel = toBusinessAiCodeModelId(runtimeModel, effort);
-            setLastResolvedRuntimeModel(baicModel);
-            setLastEndpoint(BUSINESS_AICODE_ENDPOINT);
-            const ccpaReq = buildRequest(model, context, projectId, opts, baicModel);
-            const baicBody = JSON.stringify(
-              buildBusinessAiCodeRequest(ccpaReq, baicModel, license.userTier),
-            );
-            response = await fetchWithHeaderDeadline(
-              `${BUSINESS_AICODE_ENDPOINT}/v1beta/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(license.location)}:streamGenerateContent?alt=sse`,
-              {
-                method: "POST",
-                headers: requestHeaders,
-                body: baicBody,
-              },
-              opts.signal,
-              streamHeaderTimeoutMs(),
-              streamStallTimeoutMs(),
-            );
-            setLastStatus(response.status);
-            if (response.ok) break;
-            lastText = await response.text();
+            for (const endpoint of endpointCandidates()) {
+              setLastEndpoint(endpoint);
+              response = await fetchWithHeaderDeadline(
+                `${endpoint}/v1internal:streamGenerateContent?alt=sse`,
+                {
+                  method: "POST",
+                  headers: requestHeaders,
+                  body,
+                },
+                opts.signal,
+                streamHeaderTimeoutMs(),
+                streamStallTimeoutMs(),
+              );
+              setLastStatus(response.status);
+              if (response.ok) break;
+              lastText = await response.text();
+              if (response.status === 429 && isAccountQuota429(lastText)) break;
+              // Generic resource exhaustion is a dead model, not a reason to walk every endpoint.
+              if (response.status === 429 && !isRetryableRateLimit(lastText)) break;
+              if (![403, 404, 429, 500, 502, 503, 504].includes(response.status)) break;
+            }
+
+            // Automatic fallback to BusinessAICode if CCPA rejected an Enterprise GCP project with #3501
+            if (
+              !response?.ok &&
+              response?.status === 403 &&
+              /#3501|valid license of this product/i.test(lastText) &&
+              /^gemini-/i.test(runtimeModel)
+            ) {
+              const license = await resolveBusinessLicense(creds.token, projectId);
+              const baicModel = toBusinessAiCodeModelId(runtimeModel, effort);
+              setLastResolvedRuntimeModel(baicModel);
+              setLastEndpoint(BUSINESS_AICODE_ENDPOINT);
+              const ccpaReq = buildRequest(model, context, projectId, opts, baicModel);
+              const baicBody = JSON.stringify(
+                buildBusinessAiCodeRequest(ccpaReq, baicModel, license.userTier),
+              );
+              response = await fetchWithHeaderDeadline(
+                `${BUSINESS_AICODE_ENDPOINT}/v1beta/projects/${encodeURIComponent(projectId)}/locations/${encodeURIComponent(license.location)}:streamGenerateContent?alt=sse`,
+                {
+                  method: "POST",
+                  headers: requestHeaders,
+                  body: baicBody,
+                },
+                opts.signal,
+                streamHeaderTimeoutMs(),
+                streamStallTimeoutMs(),
+              );
+              setLastStatus(response.status);
+              if (response.ok) break;
+              lastText = await response.text();
+            }
           }
 
           if (response?.ok) break;

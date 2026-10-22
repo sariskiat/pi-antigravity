@@ -67,7 +67,9 @@ function chunkyBody(_url: string, _init: RequestInit): Promise<Response> {
 }
 
 async function main(): Promise<void> {
-  // 1. Tarpit: never resolves, deadline fires with the named error.
+  const keepAlive = setInterval(() => {}, 1000);
+  try {
+    // 1. Tarpit: never resolves, deadline fires with the named error.
   let sawTarpitError = false;
   try {
     await fetchWithHeaderDeadline("https://x", {}, undefined, 40, 0, hangForever);
@@ -142,7 +144,10 @@ async function main(): Promise<void> {
   delete process.env.ANTIGRAVITY_STREAM_HEADER_TIMEOUT_MS;
   delete process.env.ANTIGRAVITY_STREAM_STALL_TIMEOUT_MS;
 
-  console.log("test-stream-header-deadline: all assertions passed");
+    console.log("test-stream-header-deadline: all assertions passed");
+  } finally {
+    clearInterval(keepAlive);
+  }
 }
 
 await main();

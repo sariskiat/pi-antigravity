@@ -10,6 +10,7 @@ import {
   antigravityHeaders,
   defaultProjectId,
   defaultUserAgent,
+  isEnterpriseCredentials,
   stableProjectId,
 } from "../src/client/index.js";
 import { getLastDiagnostics, resetDiagnosticsForTests, setLastError } from "../src/diagnostics/index.js";
@@ -26,6 +27,7 @@ import {
   convertTools,
   friendlyAntigravityError,
   mapStopReason,
+  publicErrorStatus,
 } from "../src/stream/index.js";
 import {
   antigravityRequestEnvelope,
@@ -720,6 +722,49 @@ assert.equal(
   "rate limit reached must be retryable by Pi",
 );
 
+// Transient 408/5xx HTTP errors and their publicErrorStatus wrappers must be retryable by Pi
+for (const [status, body] of [
+  [408, "Request timeout"],
+  [500, "Internal error"],
+  [502, "Bad gateway"],
+  [503, "Service unavailable"],
+  [503, "No capacity available for model gemini-4-argon-high on the server"],
+  [504, "Gateway timeout"],
+] as const) {
+  const friendly = friendlyAntigravityError(status, body);
+  const publicStatus = publicErrorStatus(status, friendly);
+  assert.equal(publicStatus, String(status), `status ${status} must preserve numeric publicErrorStatus`);
+  const wrapped = `Antigravity API error (${publicStatus}, endpoint=https://businessaicode.googleapis.com): ${friendly}`;
+  assert.equal(
+    isRetryableAssistantError({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: friendly,
+    } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+    true,
+    `friendly ${status} (${body}) must be retryable by Pi`,
+  );
+  assert.equal(
+    isRetryableAssistantError({
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: wrapped,
+    } as unknown as Parameters<typeof isRetryableAssistantError>[0]),
+    true,
+    `wrapped ${status} (${body}) must be retryable by Pi`,
+  );
+}
+
+// Non-retryable 429 must keep request-failed in publicErrorStatus
+assert.equal(publicErrorStatus(429, unavailable429Error), "request-failed");
+assert.equal(publicErrorStatus(429, quotaResetError), "request-failed");
+assert.equal(publicErrorStatus(429, plainThrottleError), "429");
+
+// Enterprise credential mode relies on authMode or ANTIGRAVITY_AUTH_MODE, not hardcoded project IDs
+assert.equal(isEnterpriseCredentials({ projectId: "any-gcp-project", authMode: "enterprise" }), true);
+assert.equal(isEnterpriseCredentials({ projectId: "any-gcp-project", authMode: "subscription" }), false);
+assert.equal(isEnterpriseCredentials({ projectId: "any-gcp-project" }), false);
+
 assert.match(
   friendlyAntigravityError(400, JSON.stringify({ error: { message: "Unknown name anyOf" } })),
   /request format was rejected/i,
@@ -1183,11 +1228,11 @@ const multimodalResultContext = {
 const convertedMultimodal = convertMessages(flash37Model, multimodalResultContext, geminiRuntime);
 assert.equal(convertedMultimodal.length, 3);
 assert.equal(convertedMultimodal[2]?.role, "user");
-assert.equal(convertedMultimodal[2]?.parts.length, 2);
-assert.ok(convertedMultimodal[2]?.parts.some((p) => "functionResponse" in p));
-assert.ok(
-  convertedMultimodal[2]?.parts.some((p) => "inlineData" in p && p.inlineData.mimeType === "image/png"),
-);
+assert.equal(convertedMultimodal[2]?.parts.length, 1);
+const multimodalFnPart = convertedMultimodal[2]?.parts[0];
+assert.ok(multimodalFnPart && "functionResponse" in multimodalFnPart);
+assert.equal(multimodalFnPart.functionResponse.parts?.length, 1);
+assert.equal(multimodalFnPart.functionResponse.parts?.[0]?.inlineData.mimeType, "image/png");
 
 const crossThinkingContext = {
   messages: [
@@ -1393,7 +1438,7 @@ assert.equal(
   '<skill name="smart-commit-grouping">Group commits by intent.</skill>',
 );
 
-// Tool-result-only turns also need no synthetic user text.
+// Tool-result-only turns get a separate synthetic user text turn before the functionResponse turn.
 const toolResultOnlyContext = {
   messages: [
     {
@@ -1413,15 +1458,16 @@ const toolResultOnlyRequest = buildRequest(
   {},
   "gemini-3.7-flash-low",
 );
-assert.equal(toolResultOnlyRequest.request.contents.length, 1);
+assert.equal(toolResultOnlyRequest.request.contents.length, 2);
 assert.equal(toolResultOnlyRequest.request.contents[0]?.role, "user");
-assert.ok(
-  toolResultOnlyRequest.request.contents[0]?.parts.some((part) => "functionResponse" in part),
-);
 assert.ok(
   toolResultOnlyRequest.request.contents[0]?.parts.some(
     (part) => "text" in part && part.text === "Continue the active task using the available instructions and context.",
   ),
+);
+assert.equal(toolResultOnlyRequest.request.contents[1]?.role, "user");
+assert.ok(
+  toolResultOnlyRequest.request.contents[1]?.parts.some((part) => "functionResponse" in part),
 );
 
 const fallbackPersona = buildRequest(flash37Model, dummyContext, "test-proj", {}, "gemini-3.7-flash-low");
@@ -1438,7 +1484,7 @@ assert.equal(opusCost?.output, 75);
 // Wire fingerprint: User-Agent format (pure agy CLI)
 assert.equal(
   defaultUserAgent(),
-  "antigravity/cli/1.4.0 (aidev_client; os_type=linux; arch=amd64; cl=982146307; auth_method=consumer)",
+  "antigravity/cli/1.4.3 (aidev_client; os_type=darwin; arch=arm64; cl=982146307; auth_method=consumer)",
 );
 
 // Wire fingerprint: Headers hygiene & environment isolation
